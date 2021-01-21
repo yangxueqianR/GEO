@@ -1,0 +1,64 @@
+#PCA
+dat = t(dat)
+dat = as.data.frame(dat)
+dat = cbind(dat,group_list)
+library("FactoMineR")
+library("factoextra")
+dat.pca = PCA(dat[,-ncol(dat)],graph = FALSE)
+fviz_pca_ind(dat.pca,
+             geom.ind="point",
+             col.ind=dat$group_list,
+             addEllipses=TRUE,
+             legend.tetle = "Groups"
+             )
+ggsave("all_sample_PAC.png")
+
+#heatmap
+cg=names(tail(sort(apply(dat,1,sd)),1000))
+library(pheatmap)
+pheatmap(dat[cg,],show_colnames = F,show_rownames=F)
+n=t(scale(t(dat[cg,])))
+n[n>2]=2 
+n[n< -2]= -2
+pheatmap(n,show_colnames =F,show_rownames = F)
+ac=data.frame(g=group_list)
+rownames(ac)=colnames(n)
+pheatmap(n,show_colnames =F,show_rownames = F,
+         annotation_col=ac,filename = 'heatmap_top1000_sd.png')
+         
+#箱型图
+boxplot(dat[1,]~group_list)
+bp=function(g){
+  library(ggpubr)
+  df=data.frame(gene=g,stage=group_list)
+  p = ggboxplot(df,x="stage",y="gene",
+                color="stage",palette="jco",
+                add="jitter")
+  p+stat_compare_means()
+}
+bp(dat[1,])
+bp(dat[2,])
+bp(dat[3,])
+bp(dat[4,])
+
+# volcano plot
+nrDEG=deg
+attach(nrDEG)
+plot(logFC,-log10(P.Value))
+library(ggpubr)
+df=nrDEG
+df$value = -log10(P.Value)
+ggscatter(df,x="logFC",y="value",size = 0.5)
+df$gene=ifelse(df$P.Value>0.01,"stable",
+               ifelse(df$logFC>2,"up",
+                      ifelse(df$logFC < -2,"down","stable")))
+df$name=rownames(df)
+ggscatter(df,x="logFC",y="value",color="gene",size = 0.5,lablel="name",repel = T,label.select = head(rownames(deg)),palette = c("#00AFBB", "#E7B800", "#FC4E07"))
+ggsave('vocano.png')
+
+# MA 图
+df$p_c = ifelse(df$P.Value<0.001,'p<0.001',
+                ifelse(df$P.Value<0.01,'0.001<p<0.01','p>0.01'))
+ggscatter(df,x = "AveExpr",y="logFC",color = "p_c",size = 0.2,palette = c("green","red","black"))
+ggsave("MA.png")
+
