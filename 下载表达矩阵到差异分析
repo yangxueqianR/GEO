@@ -1,0 +1,110 @@
+#以GSE42872为例
+rm(list = ls())
+options(stringsAsFactors = F)
+library(GEOquery)
+eSet = getGEO('GSE42872',destdir = '.',AnnotGPL = F,getGPL = F)
+eSet #查看下载的数据类型，“$GSE42872_series_matrix.txt.gz” $开头为列表
+length(eSet) #只有一个列表
+ob = eSet[[1]] 
+exprSet = exprs(ob) #表达矩阵
+samples = sampleNames(ob) #样本名
+meta = pData(ob) #临床数据
+group_list = as.character(pdata[,2]) #分组信息
+
+#表达矩阵ID转换
+library(hugene10sttranscriptcluster.db) #具体R包需要查
+ls('package:hugene10sttranscriptcluster.db') #看具体需要用哪个函数ID转换
+ids = toTable(hugene10sttranscriptclusterSYMBOL) 
+ #ID查重
+length(unique(ids$symbol))
+tail(sort(table(ids$symbol)))
+table(sort(table(ids$symbol)))
+plot(table(sort(table(ids$symbol))))
+ #去重与合并
+table(rownames(exprSet) %in% ids$probe_id)
+exprSet = exprSet[rownames(exprSet) %in% ids$probe_id,]
+ids = ids[match(rownames(exprSet),ids$probe_id),]
+merges = function(exprSet,ids){
+  tmp = by(exprSet,
+           ids$symbol,
+           function(x) rownames(x)[which.max(rowMeans(x))])
+  probes = as.character(tmp)
+  print(dim(exprSet))
+  exprSet = exprSet[rownames(exprSet) %in% probes,]
+  print(dim(exprSet))
+  rownames(exprSet) = ids[match(rownames(exprSet),ids$probe_id),2]
+  return(exprSet)
+}
+exprSet = merges(exprSet,ids)
+exprSet["GAPDH",] 
+boxplot(exprSet)
+exprSet["ACTB",] #两者值低的话说明数据有问题
+ #若ID转换没有对应R包
+gpl = getGEO('GPL6244',destdir = ".")
+colnames(Table(gpl))
+probe2gene=Table(gpl)[,c(1,10,11,12)]
+ 
+#检验一下表达矩阵
+ #设置竖列表达矩阵
+library(reshape2)
+exprSet_L = melt(exprSet)
+colnames(exprSet_L) = c("probe","sample","value")
+ #ggplot2
+library(ggplot2)
+p = ggplot(exprSet_L,aes(x = sample,y=value,fill=group))+geom_boxplot()
+print(p)
+p = ggplot(exprSet_L,aes(x = sample,y=value,fill=group))+geom_violin()
+print(p)
+p=ggplot(exprSet_L, aes(x = value, fill = 'lightblue'))+geom_histogram(bins = 500)
+print(p)
+p=ggplot(exprSet_L, aes(x = value, fill = 'lightblue'))+geom_density()
+print(p)
+ #hclust
+colnames(exprSet)=paste(group_list,1:ncol(exprSet),sep='_')
+nodePar <- list(lab.cex = 0.6, pch = c(NA, 19),
+                cex = 0.7, col = "blue")  #Define nodePar
+hc=hclust(dist(t(exprSet)))
+par(mar=c(5,5,5,10))
+png('hclust.png',width = 890,height = 1111,res=120)
+plot(as.dendrogram(hc), nodePar = nodePar, horiz = TRUE)
+dev.off()
+ #PCA
+library(ggfortify)
+df=as.data.frame(t(exprSet))
+df$group=group_list
+png('pca.png',res=120)
+autoplot(prcomp( df[,1:(ncol(df)-1)] ), data=df,colour = 'group')+theme_bw()
+dev.off()
+
+#t-test
+dat = exprSet
+group_list=as.factor(group_list)
+group1 = which(group_list == levels(group_list)[1])
+group2 = which(group_list == levels(group_list)[2])
+dat1 = dat[,group1]
+dat2 = dat[,group2]
+dat = cbind(dat1,dat2)
+pvals = apply(exprSet, 1,function(x){
+  t.test(as.numeric(x)~group_list)$p.value
+})
+p.adj = p.adjust(pvals,method = "BH")
+avg_1 = rowMeans(dat1)
+avg_2 = rowMeans(dat2)
+log2FC = avg_2 - avg_1
+DEG_t.test = cbind(avg_1,avg_2,log2FC,pvals,p.adj)
+DEG_t.test = DEG_t.test[order(DEG_t.test[,4]),]
+DEG_t.test = as.data.frame(DEG_t.test)
+
+#DEG by limma
+library(limma)
+design = model.matrix(~0+factor(group_list))
+colnames(design) = levels(factor(group_list))
+rownames(design) = colnames(exprSet)
+design
+contrast.matrix = makeContrasts(paste0(unique(group_list),collapse = "-"),levels = design)
+contrast.matrix
+fit = lmFit(exprSet,design)
+fit2 = contrasts.fit(fit,contrast.matrix)
+fit2 = eBayes(fit2)
+tempOutput = topTable(fit2,coef=1,n=Inf)
+nrDEG = na.omit(tempOutput)
